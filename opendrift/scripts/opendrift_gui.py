@@ -15,7 +15,7 @@ import numpy as np
 from PIL import ImageTk, Image
 logging.getLogger('PIL').setLevel(logging.INFO)
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from importlib.resources import files
 import opendrift
 from opendrift.models.oceandrift import OceanDrift
@@ -109,18 +109,106 @@ class OpenDriftGUI(tk.Tk):
 
         tk.Tk.__init__(self)
 
-        self.title('OpenDrift ' + opendrift.__version__ + ' GTI Turbo Ultra')
+        self.title('OpenDrift ' + opendrift.__version__ + ' - Simulation GUI')
+        
+        # Allow window to be resized and scrolled on smaller screens
+        self.resizable(True, True)
+        self.minsize(700, 600)
+        # Set initial window size to show full content including output
+        self.geometry('700x800')
+        
+        # Apply modern ttk theme with white background
+        style = ttk.Style()
+        available_themes = style.theme_names()
+        if 'clam' in available_themes:
+            style.theme_use('clam')
+        elif 'alt' in available_themes:
+            style.theme_use('alt')
+
+        # Modern font
+        modern_font = ('Microsoft JhengHei UI Light', 10)
+        modern_font_small = ('Microsoft JhengHei UI Light', 9)
+        modern_font_bold = ('Microsoft JhengHei UI', 10)
+        self.modern_font = modern_font
+        self.modern_font_small = modern_font_small
+        self.option_add('*Font', modern_font)
+        self.option_add('*TkDefaultFont', modern_font)
+
+        # Set white background for all widgets
+        self.configure(bg='white')
+        style.configure('.', background='white', font=modern_font)
+        style.configure('TFrame', background='white')
+        style.configure('TLabel', background='white', font=modern_font)
+        style.configure('TLabelframe', background='white')
+        style.configure('TLabelframe.Label', background='white', font=modern_font_bold)
+        style.configure('TNotebook', background='white')
+        style.configure('TNotebook.Tab', background='#f0f0f0', font=modern_font,
+                        padding=[12, 4])
+        style.map('TNotebook.Tab',
+                  background=[('selected', 'white')],
+                  foreground=[('selected', 'black')])
+        style.configure('TCheckbutton', background='white', font=modern_font)
+        style.configure('TRadiobutton', background='white', font=modern_font)
+        style.configure('TButton', font=modern_font, padding=[8, 4],
+                        background='#e8e8e8', borderwidth=1, relief='raised')
+        style.map('TButton',
+                  background=[('active', '#d0d0d0'), ('pressed', '#c0c0c0')],
+                  relief=[('pressed', 'sunken'), ('!pressed', 'raised')])
+        style.configure('TEntry', fieldbackground='#E8F0FE')
+        style.configure('TCombobox', fieldbackground='#E8F0FE')
+        # Light blue background for input highlighting
+        self.input_bg = '#E8F0FE'
 
         ##################
         # Layout frames
         ##################
-        self.n = ttk.Notebook(self.master)
-        self.n.grid()
-        self.seed = tk.Frame(self.n)
+        self.n = ttk.Notebook(self)
+        self.n.grid(row=0, column=0, sticky='nsew')
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        
+        # Create a scrollable container for the Seeding tab
+        seed_container = ttk.Frame(self.n)
+        self.seed_canvas = tk.Canvas(seed_container, highlightthickness=0, bg='white')
+        self.seed_scrollbar = ttk.Scrollbar(seed_container, orient="vertical",
+                                            command=self.seed_canvas.yview)
+        self.seed = ttk.Frame(self.seed_canvas)
+        
+        self.seed.bind(
+            "<Configure>",
+            lambda e: self.seed_canvas.configure(
+                scrollregion=self.seed_canvas.bbox("all"))
+        )
+        self.seed_canvas_window = self.seed_canvas.create_window(
+            (0, 0), window=self.seed, anchor="nw")
+        self.seed_canvas.configure(yscrollcommand=self.seed_scrollbar.set)
+        
+        self.seed_canvas.pack(side="left", fill="both", expand=True)
+        self.seed_scrollbar.pack(side="right", fill="y")
+        
+        # Update canvas width when container resizes
+        def _on_seed_container_configure(event):
+            self.seed_canvas.itemconfig(
+                self.seed_canvas_window, width=event.width)
+        self.seed_canvas.bind("<Configure>", _on_seed_container_configure)
+        
+        # Mousewheel scrolling for the seed tab
+        def _on_seed_mousewheel(event):
+            self.seed_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        self.seed_canvas.bind("<MouseWheel>", _on_seed_mousewheel)
+        self.seed.bind("<MouseWheel>", _on_seed_mousewheel)
+        # Also bind to all child widgets as they are added
+        def _bind_mousewheel_recursive(widget, handler):
+            widget.bind("<MouseWheel>", handler)
+            for child in widget.winfo_children():
+                _bind_mousewheel_recursive(child, handler)
+        self._bind_seed_mousewheel = lambda: _bind_mousewheel_recursive(self.seed, _on_seed_mousewheel)
+        self._on_seed_mousewheel = _on_seed_mousewheel
+        
         self.confignotebook = ttk.Notebook(self.n)
-        self.config = tk.Frame(self.confignotebook)
-        self.forcing = tk.Frame(self.n)
-        self.n.add(self.seed, text='Seeding')
+        self.config = ttk.Frame(self.confignotebook)
+        self.forcing = ttk.Frame(self.n)
+        self.n.add(seed_container, text='Seeding')
         self.n.add(self.confignotebook, text='Config')
         self.n.add(self.forcing, text='Forcing')
         self.confignotebook.add(self.config, text='SubConfig')
@@ -128,66 +216,68 @@ class OpenDriftGUI(tk.Tk):
         # Top
         self.logo = tk.Frame(self.seed, bg='white')
         self.logo.grid(row=0, column=0, rowspan=1)
-        self.top = tk.Frame(self.seed,
-                            relief=tk.FLAT, pady=25, padx=25)
+        self.top = ttk.Frame(self.seed, padding=(25, 25))
         self.top.grid(row=0, column=1, rowspan=1)
-        # Time start and end
-        self.start_t = tk.Frame(self.seed, relief=tk.FLAT)
-        self.start_t.grid(row=20, column=0, rowspan=1)
-        self.end_t = tk.Frame(self.seed, relief=tk.FLAT)
-        self.end_t.grid(row=30, column=0, rowspan=1)
-        self.start = tk.Frame(self.seed, bg='lightgray', bd=2,
-                              relief=tk.SUNKEN, pady=5, padx=5)
-        self.start.grid(row=20, column=1, rowspan=1)
-        self.end = tk.Frame(self.seed, bg='gray', bd=2,
-                            relief=tk.SUNKEN, padx=5, pady=5)
-        self.end.grid(row=30, column=1)
-        self.coastline = tk.Frame(self.seed, bd=2,
-                                 relief=tk.FLAT, padx=5, pady=0)
-        self.coastline.grid(row=40, column=1)
-        self.duration = tk.Frame(self.seed, bd=2,
-                                 relief=tk.FLAT, padx=5, pady=5)
-        self.duration.grid(row=50, column=1)
-        self.output = tk.Frame(self.seed, bd=2,
-                               relief=tk.FLAT, padx=5, pady=0)
-        self.output.grid(row=70, column=0, columnspan=7, sticky='nsew')
 
-        self.results = tk.Frame(self.seed, bd=2,
-                               relief=tk.FLAT, padx=5, pady=0)
-        self.results.grid(row=60, column=7, columnspan=1, sticky='ew')
+        # Combined Release LabelFrame
+        self.release_frame = ttk.LabelFrame(self.seed, text='RELEASE', padding=(10, 10))
+        self.release_frame.grid(row=20, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
+        
+        # Sub-labels for Start and End inside the combined frame
+        self.start_t = ttk.Frame(self.release_frame)
+        self.start_t.grid(row=0, column=0, rowspan=1)
+        self.start = ttk.LabelFrame(self.release_frame, text='START', padding=(5, 5))
+        self.start.grid(row=0, column=1, rowspan=1, padx=5, pady=(0, 5))
+        self.end_t = ttk.Frame(self.release_frame)
+        self.end_t.grid(row=1, column=0, rowspan=1)
+        self.end = ttk.LabelFrame(self.release_frame, text='END', padding=(5, 5))
+        self.end.grid(row=1, column=1, padx=5, pady=(0, 5))
+        
+        self.coastline = ttk.Frame(self.seed, padding=(5, 0))
+        self.coastline.grid(row=40, column=1)
+        self.duration = ttk.Frame(self.seed, padding=(5, 5))
+        self.duration.grid(row=50, column=1)
+        
+        # Results frame - placed above output, visible after simulation
+        self.results = ttk.Frame(self.seed, padding=(5, 0))
+        self.results.grid(row=70, column=0, columnspan=2, sticky='ew')
+
+        # Output frame - guaranteed minimum size
+        self.output = ttk.LabelFrame(self.seed, text='OUTPUT LOG', padding=(5, 5))
+        self.output.grid(row=80, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
 
         #######################################################
-        tk.Label(self.top, text='Simulation type').grid(row=0, column=0)
+        ttk.Label(self.top, text='Simulation type').grid(row=0, column=0)
         self.model = tk.StringVar()
         self.model.set(list(self.opendrift_models)[0])
-        self.modeldrop = tk.OptionMenu(self.top, self.model,
-            *(list(self.opendrift_models)), command=self.set_model)
-        self.modeldrop.grid(row=0, column=1)
+        self.modeldrop = ttk.OptionMenu(self.top, self.model,
+            list(self.opendrift_models)[0], *list(self.opendrift_models), command=self.set_model)
+        self.modeldrop.grid(row=0, column=1, padx=5)
 
-        help_button = tk.Button(self.top, text='Help',
-                                command=self.show_help)
+        help_button = ttk.Button(self.top, text='Help',
+                                 command=self.show_help)
         help_button.grid(row=0, column=2, padx=50)
 
 
         ##########
         # Release
         ##########
-        startlabel = tk.Label(self.start_t, text="\n\nStart release\n\n")
-        startlabel.grid(row=0, column=0)
+        startlabel = ttk.Label(self.start_t, text='Start release')
+        startlabel.grid(row=0, column=0, pady=5)
 
-        tk.Label(self.start, text='Longitude').grid(row=0, column=1)
-        tk.Label(self.start, text='Latitude').grid(row=0, column=0)
-        tk.Label(self.start, text='Radius [m]').grid(row=0, column=2)
+        ttk.Label(self.start, text='Longitude').grid(row=0, column=1)
+        ttk.Label(self.start, text='Latitude').grid(row=0, column=0)
+        ttk.Label(self.start, text='Radius [m]').grid(row=0, column=2)
         self.latvar = tk.StringVar()
         self.lonvar = tk.StringVar()
         self.radiusvar = tk.StringVar()
-        self.lat = tk.Entry(self.start, textvariable=self.latvar,
-                            width=10, justify=tk.RIGHT)
-        self.lon = tk.Entry(self.start, textvariable=self.lonvar,
-                            width=10, justify=tk.RIGHT)
-        self.radius = tk.Entry(self.start, width=6,
-                               textvariable=self.radiusvar,
-                               justify=tk.RIGHT)
+        self.lat = ttk.Entry(self.start, textvariable=self.latvar,
+                             width=10, justify=tk.RIGHT)
+        self.lon = ttk.Entry(self.start, textvariable=self.lonvar,
+                             width=10, justify=tk.RIGHT)
+        self.radius = ttk.Entry(self.start, width=6,
+                                textvariable=self.radiusvar,
+                                justify=tk.RIGHT)
         self.lon.grid(row=10, column=1)
         self.lon.insert(0, '4.5')
         self.lat.grid(row=10, column=0)
@@ -197,7 +287,7 @@ class OpenDriftGUI(tk.Tk):
         self.lonvar.trace('w', self.copy_position)
         self.latvar.trace('w', self.copy_position)
         self.radiusvar.trace('w', self.copy_position)
-        conv=tk.Label(self.start, text='Convert from deg/min/sec', fg='blue')
+        conv=ttk.Label(self.start, text='Convert from deg/min/sec', foreground='blue', cursor='hand2')
         conv.grid(row=11, column=0, columnspan=2)
         conv.bind("<Button-1>", lambda e: self.convert_lonlat())
 
@@ -205,16 +295,17 @@ class OpenDriftGUI(tk.Tk):
         # Time
         ##########
         now = datetime.utcnow()
-        tk.Label(self.start, text='Day').grid(row=20, column=0)
-        tk.Label(self.start, text='Month').grid(row=20, column=1)
-        tk.Label(self.start, text='Year').grid(row=20, column=2)
-        tk.Label(self.start, text='Hour').grid(row=20, column=3)
-        tk.Label(self.start, text='Minutes').grid(row=20, column=4)
-        tk.Label(self.start, text='Timezone').grid(row=0, column=4)
+        ttk.Label(self.start, text='Day').grid(row=20, column=0)
+        ttk.Label(self.start, text='Month').grid(row=20, column=1)
+        ttk.Label(self.start, text='Year').grid(row=20, column=2)
+        ttk.Label(self.start, text='Hour').grid(row=20, column=3)
+        ttk.Label(self.start, text='Minutes').grid(row=20, column=4)
+        ttk.Label(self.start, text='Timezone').grid(row=0, column=4)
         self.datevar = tk.StringVar()
         self.dates = range(1, 32)
         self.datevar.set(now.day)
         self.date = tk.OptionMenu(self.start, self.datevar, *self.dates)
+        self.date.config(bg=self.input_bg, highlightthickness=0)
         self.date.grid(row=30, column=0)
 
         self.monthvar = tk.StringVar()
@@ -224,18 +315,21 @@ class OpenDriftGUI(tk.Tk):
         self.monthvar.set(self.months[now.month-1])
         self.month = tk.OptionMenu(self.start, self.monthvar,
                                    *self.months)
+        self.month.config(bg=self.input_bg, highlightthickness=0)
         self.month.grid(row=30, column=1)
 
         self.yearvar = tk.StringVar()
         self.years = range(2015, now.year+2)
         self.yearvar.set(now.year)
         self.year = tk.OptionMenu(self.start, self.yearvar, *self.years)
+        self.year.config(bg=self.input_bg, highlightthickness=0)
         self.year.grid(row=30, column=2)
 
         self.hourvar = tk.StringVar()
         self.hours = range(0, 24)
         self.hourvar.set(now.hour)
         self.hour = tk.OptionMenu(self.start, self.hourvar, *self.hours)
+        self.hour.config(bg=self.input_bg, highlightthickness=0)
         self.hour.grid(row=30, column=3)
 
         self.minutevar = tk.StringVar()
@@ -243,6 +337,7 @@ class OpenDriftGUI(tk.Tk):
         self.minutevar.set(now.minute)
         self.minute = tk.OptionMenu(self.start, self.minutevar,
                                     *self.minutes)
+        self.minute.config(bg=self.input_bg, highlightthickness=0)
         self.minute.grid(row=30, column=4)
 
         self.timezonevar = tk.StringVar()
@@ -250,6 +345,7 @@ class OpenDriftGUI(tk.Tk):
         self.timezonevar.set('UTC')
         self.timezone = tk.OptionMenu(self.start, self.timezonevar,
                                     *self.timezone)
+        self.timezone.config(bg=self.input_bg, highlightthickness=0)
         self.timezone.grid(row=10, column=4)
 
         self.datevar.trace('w', self.copy_position)
@@ -261,14 +357,14 @@ class OpenDriftGUI(tk.Tk):
         ###############
         # Release End
         ###############
-        endlabel = tk.Label(self.end_t, text="\n\nEnd release\n\n")
-        endlabel.grid(row=0, column=0)
-        tk.Label(self.end, text='Longitude', bg='gray').grid(row=0, column=1)
-        tk.Label(self.end, text='Latitude', bg='gray').grid(row=0, column=0)
-        tk.Label(self.end, text='Radius [m]', bg='gray').grid(row=0, column=2)
-        self.elat = tk.Entry(self.end, width=10, justify=tk.RIGHT)
-        self.elon = tk.Entry(self.end, width=10, justify=tk.RIGHT)
-        self.eradius = tk.Entry(self.end, width=6, justify=tk.RIGHT)
+        endlabel = ttk.Label(self.end_t, text='End release')
+        endlabel.grid(row=0, column=0, pady=5)
+        ttk.Label(self.end, text='Longitude').grid(row=0, column=1)
+        ttk.Label(self.end, text='Latitude').grid(row=0, column=0)
+        ttk.Label(self.end, text='Radius [m]').grid(row=0, column=2)
+        self.elat = ttk.Entry(self.end, width=10, justify=tk.RIGHT)
+        self.elon = ttk.Entry(self.end, width=10, justify=tk.RIGHT)
+        self.eradius = ttk.Entry(self.end, width=6, justify=tk.RIGHT)
         self.elon.grid(row=10, column=1)
         self.elon.insert(0, '4.5')
         self.elat.grid(row=10, column=0)
@@ -279,33 +375,37 @@ class OpenDriftGUI(tk.Tk):
         # Time
         ##########
         now = datetime.utcnow()
-        tk.Label(self.end, text='Day', bg='gray').grid(row=20, column=0)
-        tk.Label(self.end, text='Month', bg='gray').grid(row=20, column=1)
-        tk.Label(self.end, text='Year', bg='gray').grid(row=20, column=2)
-        tk.Label(self.end, text='Hour', bg='gray').grid(row=20, column=3)
-        tk.Label(self.end, text='Minutes', bg='gray').grid(row=20, column=4)
+        ttk.Label(self.end, text='Day').grid(row=20, column=0)
+        ttk.Label(self.end, text='Month').grid(row=20, column=1)
+        ttk.Label(self.end, text='Year').grid(row=20, column=2)
+        ttk.Label(self.end, text='Hour').grid(row=20, column=3)
+        ttk.Label(self.end, text='Minutes').grid(row=20, column=4)
         self.edatevar = tk.StringVar()
         self.edates = range(1, 32)
         self.edatevar.set(now.day)
         self.edate = tk.OptionMenu(self.end, self.edatevar, *self.edates)
+        self.edate.config(bg=self.input_bg, highlightthickness=0)
         self.edate.grid(row=30, column=0)
 
         self.emonthvar = tk.StringVar()
         self.emonthvar.set(self.months[now.month-1])
         self.emonth = tk.OptionMenu(self.end, self.emonthvar,
                                     *self.months)
+        self.emonth.config(bg=self.input_bg, highlightthickness=0)
         self.emonth.grid(row=30, column=1)
 
         self.eyearvar = tk.StringVar()
         self.eyears = range(2015, now.year+2)
         self.eyearvar.set(now.year)
         self.eyear = tk.OptionMenu(self.end, self.eyearvar, *self.eyears)
+        self.eyear.config(bg=self.input_bg, highlightthickness=0)
         self.eyear.grid(row=30, column=2)
 
         self.ehourvar = tk.StringVar()
         self.ehours = range(0, 24)
         self.ehourvar.set(now.hour)
         self.ehour = tk.OptionMenu(self.end, self.ehourvar, *self.ehours)
+        self.ehour.config(bg=self.input_bg, highlightthickness=0)
         self.ehour.grid(row=30, column=3)
 
         self.eminutevar = tk.StringVar()
@@ -313,48 +413,60 @@ class OpenDriftGUI(tk.Tk):
         self.eminutevar.set(now.minute)
         self.eminute = tk.OptionMenu(self.end, self.eminutevar,
                                      *self.eminutes)
+        self.eminute.config(bg=self.input_bg, highlightthickness=0)
         self.eminute.grid(row=30, column=4)
-        self.eyear.config(bg='gray')
-        self.emonth.config(bg='gray')
-        self.edate.config(bg='gray')
-        self.ehour.config(bg='gray')
-        self.eminute.config(bg='gray')
+        self.eyear.config(state='normal')
+        self.emonth.config(state='normal')
+        self.edate.config(state='normal')
+        self.ehour.config(state='normal')
+        self.eminute.config(state='normal')
 
         # Check seeding
-        check_seed = tk.Button(self.end_t, text='Check seeding',
-                               command=self.check_seeding)
-        check_seed.grid(row=10, column=0, padx=0)
+        check_seed = ttk.Button(self.end_t, text='Check seeding',
+                                command=self.check_seeding)
+        check_seed.grid(row=10, column=0, padx=5, pady=5)
 
         #######################
         # Simulation duration
         #######################
-        tk.Label(self.duration, text='Run simulation ').grid(row=50, column=0)
-        self.durationhours = tk.Entry(self.duration, width=3,
-                                      justify=tk.RIGHT)
+        ttk.Label(self.duration, text='Run simulation ').grid(row=50, column=0)
+        self.durationhours = ttk.Entry(self.duration, width=3,
+                                       justify=tk.RIGHT)
         self.durationhours.grid(row=50, column=1)
         self.durationhours.insert(0, 12)
-        tk.Label(self.duration, text=' hours ').grid(row=50, column=2)
+        ttk.Label(self.duration, text=' hours ').grid(row=50, column=2)
 
         self.directionvar = tk.StringVar()
         self.directionvar.set('forwards')
         self.direction = tk.OptionMenu(self.duration, self.directionvar,
                                        'forwards', 'backwards')
+        self.direction.config(bg=self.input_bg, highlightthickness=0)
         self.direction.grid(row=50, column=3)
-        tk.Label(self.duration, text=' in time ').grid(row=50, column=4)
+        ttk.Label(self.duration, text=' in time ').grid(row=50, column=4)
 
         ##############
         # Output box
         ##############
-        self.text = tk.Text(self.output, wrap="word", height=18)
-        self.text.grid(row=60, columnspan=6, sticky='nsw')
+        # Text widget with fixed height - always visible
+        self.text = tk.Text(self.output, wrap="word", height=18, font=('Consolas', 10), bg='white')
+        self.text.grid(row=0, column=0, sticky='ew')
         self.text.tag_configure("stderr", foreground="#b22222")
         if os.getenv('OPENDRIFT_GUI_OUTPUT', 'gui') == 'gui':
             sys.stdout = TextRedirector(self.text, "stdout")
             sys.stderr = TextRedirector(self.text, "stderr")
-        s = tk.Scrollbar(self)
-        s.grid(row=60, column=6, sticky='ns')
-        s.config(command=self.text.yview)
+        s = ttk.Scrollbar(self.output, command=self.text.yview)
+        s.grid(row=0, column=1, sticky='ns')
         self.text.config(yscrollcommand=s.set)
+        
+        # Utility buttons below output
+        button_frame = ttk.Frame(self.output)
+        button_frame.grid(row=1, column=0, sticky='w', pady=(5, 0))
+        ttk.Button(button_frame, text='Clear Output', 
+                   command=self.clear_output).pack(side=tk.LEFT, padx=2)
+        ttk.Button(button_frame, text='Copy Output', 
+                   command=self.copy_output).pack(side=tk.LEFT, padx=2)
+        ttk.Button(button_frame, text='Save Log', 
+                   command=self.save_log).pack(side=tk.LEFT, padx=2)
 
         # Diana
         self.dianadir = '/vol/vvfelles/opendrift/output/'
@@ -372,9 +484,31 @@ class OpenDriftGUI(tk.Tk):
         ##############
         self.set_model(list(self.opendrift_models)[0])
 
+        # Create scrollable forcing display
+        forcing_canvas = tk.Canvas(self.forcing, highlightthickness=0, bg='white')
+        forcing_scrollbar = ttk.Scrollbar(self.forcing, orient="vertical", command=forcing_canvas.yview)
+        forcing_frame = ttk.Frame(forcing_canvas)
+        
+        forcing_frame.bind(
+            "<Configure>",
+            lambda e: forcing_canvas.configure(scrollregion=forcing_canvas.bbox("all"))
+        )
+        
+        forcing_canvas.create_window((0, 0), window=forcing_frame, anchor="nw")
+        forcing_canvas.configure(yscrollcommand=forcing_scrollbar.set)
+        
+        forcing_canvas.pack(side="left", fill="both", expand=True)
+        forcing_scrollbar.pack(side="right", fill="y")
+        
+        # Enable mousewheel scrolling for forcing
+        def _on_forcing_mousewheel(event):
+            forcing_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        forcing_canvas.bind("<MouseWheel>", _on_forcing_mousewheel)
+        forcing_frame.bind("<MouseWheel>", _on_forcing_mousewheel)
+        
         for i, ff in enumerate(self.forcing_files):
-            tk.Label(self.forcing, text=ff.strip(), wraplength=650, font=('Courier', 8)).grid(
-                     row=i, column=0, sticky=tk.W)
+            ttk.Label(forcing_frame, text=ff.strip(), wraplength=650, 
+                     font=('Consolas', 9)).grid(row=i, column=0, sticky=tk.W, padx=5, pady=2)
 
         ##########################
         try:
@@ -382,7 +516,10 @@ class OpenDriftGUI(tk.Tk):
                 img = ImageTk.PhotoImage(Image.open(
                     opendrift.test_data_folder +
                                          '../../docs/hohohOpenDrift.jpg').resize((200, 200)))
-                self.seed.configure(bg='lightblue')
+                try:
+                    self.seed.configure(background='lightblue')
+                except:
+                    pass  # ttk frames may not support bg
             else:
                 img = ImageTk.PhotoImage(Image.open(
                     opendrift.test_data_folder +
@@ -395,11 +532,27 @@ class OpenDriftGUI(tk.Tk):
             pass # Could not display logo
 
         ##########
-        # RUN
+        # RUN and Control Buttons
         ##########
-        tk.Button(self.seed, text=startbutton, bg='green',
-                  command=self.run_opendrift).grid(row=80, column=1,
-                                              sticky=tk.W, pady=4)
+        control_frame = ttk.Frame(self.seed)
+        control_frame.grid(row=60, column=1, sticky='w', pady=4)
+        
+        # Start button with green color (uses tk.Button for reliable color on Windows)
+        self.start_btn = tk.Button(control_frame, text=startbutton, 
+                               command=self.run_opendrift,
+                               bg='#4CAF50', fg='white', activebackground='#45a049',
+                               activeforeground='white', font=('Microsoft JhengHei UI', 11),
+                               relief=tk.RAISED, width=12, pady=4, cursor='hand2',
+                               disabledforeground='black', bd=2)
+        self.start_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Additional control buttons
+        ttk.Button(control_frame, text='Reset to Defaults',
+                   command=self.reset_defaults).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text='Load Settings',
+                   command=self.load_settings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text='Save Settings',
+                   command=self.save_settings).pack(side=tk.LEFT, padx=5)
 
         try:
             import opendrift_gui_conf
@@ -426,8 +579,10 @@ class OpenDriftGUI(tk.Tk):
         mode = self.o.mode  # To be reset after plotting
         self.o.mode = Mode.Result
         from os.path import expanduser
+        from tkinter import filedialog
+        from pathlib import Path
         homefolder = expanduser("~")
-        filename = homefolder + '/' + self.simulationname
+        default_name = self.simulationname
 
         if command[0:4] == 'save':
             plt.switch_backend('agg')
@@ -435,14 +590,26 @@ class OpenDriftGUI(tk.Tk):
             plt.switch_backend('TkAgg')
 
         if command == 'saveanimation':
-            filename = filename + '.mp4'
+            filename = filedialog.asksaveasfilename(
+                initialdir=Path.home(), initialfile=default_name + '.mp4',
+                defaultextension='.mp4',
+                filetypes=[('MP4 video', '*.mp4'), ('GIF animation', '*.gif'), ('All files', '*.*')])
+            if not filename:
+                self.o.mode = mode
+                return
             self.o.animation(filename=filename)
             print('='*30 + '\nAnimation saved to file:\n'
                   + filename + '\n' + '='*30)
         elif command == 'showanimation':
             self.o.animation()
         elif command == 'saveplot':
-            filename = filename + '.png'
+            filename = filedialog.asksaveasfilename(
+                initialdir=Path.home(), initialfile=default_name + '.png',
+                defaultextension='.png',
+                filetypes=[('PNG image', '*.png'), ('PDF document', '*.pdf'), ('All files', '*.*')])
+            if not filename:
+                self.o.mode = mode
+                return
             self.o.plot(filename=filename)
             print('='*30 + '\nPlot saved to file:\n'
                   + filename + '\n' + '='*30)
@@ -451,7 +618,13 @@ class OpenDriftGUI(tk.Tk):
         elif command == 'showoilbudget':
             self.o.plot_oil_budget()
         elif command == 'saveoilbudget':
-            filename = filename + '_oilbudget.png'
+            filename = filedialog.asksaveasfilename(
+                initialdir=Path.home(), initialfile=default_name + '_oilbudget.png',
+                defaultextension='.png',
+                filetypes=[('PNG image', '*.png'), ('PDF document', '*.pdf'), ('All files', '*.*')])
+            if not filename:
+                self.o.mode = mode
+                return
             self.o.plot_oil_budget(filename=filename)
             print('='*30 + '\nPlot saved to file: '
                   + filename + '\n' + '='*30)
@@ -463,14 +636,27 @@ class OpenDriftGUI(tk.Tk):
                 legend=[self.o.specie_num2name(i) for i in range(self.o.nspecies)]
                 )
         elif command == 'saveanimationspecie':
-            filename = filename + '.mp4'
+            filename = filedialog.asksaveasfilename(
+                initialdir=Path.home(), initialfile=default_name + '_specie.mp4',
+                defaultextension='.mp4',
+                filetypes=[('MP4 video', '*.mp4'), ('All files', '*.*')])
+            if not filename:
+                self.o.mode = mode
+                return
             self.o.animation(filename=filename,
                 color='specie',vmin=0,vmax=self.o.nspecies-1,
                                 colorbar=False,
                 legend=[self.o.specie_num2name(i) for i in range(self.o.nspecies)]
                 )
         elif command == 'saveconcfile':
-            self.o.guipp_saveconcfile(filename=homefolder+'/conc_radio.nc')
+            filename = filedialog.asksaveasfilename(
+                initialdir=Path.home(), initialfile='conc_radio.nc',
+                defaultextension='.nc',
+                filetypes=[('NetCDF files', '*.nc'), ('All files', '*.*')])
+            if not filename:
+                self.o.mode = mode
+                return
+            self.o.guipp_saveconcfile(filename=filename)
         elif command == 'plotconc':
             zlayer = [-1]
             time   = None
@@ -553,9 +739,33 @@ class OpenDriftGUI(tk.Tk):
         confnames = list(set([cn.split(':')[0] for cn in self.o._config]))
         confnames.extend(['environment:constant', 'environment:fallback'])
         confnames.remove('environment')
+        
+        # Create scrollable frames for each config tab
         for sub in confnames:
-            self.subconfig[sub] = tk.Frame(self.confignotebook, pady=25)
-            self.confignotebook.add(self.subconfig[sub], text=sub)
+            # Create container with canvas and scrollbar
+            container = ttk.Frame(self.confignotebook)
+            canvas = tk.Canvas(container, highlightthickness=0, bg='white')
+            scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+            self.subconfig[sub] = ttk.Frame(canvas, padding=(10, 10))
+            
+            self.subconfig[sub].bind(
+                "<Configure>",
+                lambda e, c=canvas: c.configure(scrollregion=c.bbox("all"))
+            )
+            
+            canvas.create_window((0, 0), window=self.subconfig[sub], anchor="nw")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            
+            canvas.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            
+            # Enable mousewheel scrolling per-canvas (not bind_all)
+            def _on_mousewheel(event, canvas=canvas):
+                canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            canvas.bind("<MouseWheel>", _on_mousewheel)
+            self.subconfig[sub].bind("<MouseWheel>", _on_mousewheel)
+            
+            self.confignotebook.add(container, text=sub)
 
         sc = self.o.get_configspec(level=[2, 3])
         self.config_input = {}
@@ -572,34 +782,34 @@ class OpenDriftGUI(tk.Tk):
                 keystr = ''.join(key.split(':')[1:])
             if keystr == '':
                 keystr = key
-            lab = tk.Label(tab, text=keystr)
-            lab.grid(row=i, column=1, rowspan=1)
+            lab = ttk.Label(tab, text=keystr)
+            lab.grid(row=i, column=1, rowspan=1, sticky='w', padx=5, pady=2)
             if sc[key]['type'] in ['float', 'int']:
                 self.config_input_var[i] = tk.StringVar()
                 vcmd = (tab.register(self.validate_config),
                     '%P', '%s', key)
-                self.config_input[i] = tk.Entry(
+                self.config_input[i] = ttk.Entry(
                     tab, textvariable=self.config_input_var[i],
                     validate='key', validatecommand=vcmd,
                     width=12, justify=tk.RIGHT)
                 self.config_input[i].insert(0, str(sc[key]['default']))
-                self.config_input[i].grid(row=i, column=2, rowspan=1)
-                tk.Label(tab, text='[%s]  min: %s, max: %s' % (
+                self.config_input[i].grid(row=i, column=2, rowspan=1, padx=5)
+                ttk.Label(tab, text='[%s]  min: %s, max: %s' % (
                     sc[key]['units'], sc[key]['min'], sc[key]['max'])
-                        ).grid(row=i, column=3, rowspan=1)
+                        ).grid(row=i, column=3, rowspan=1, sticky='w', padx=5)
             if sc[key]['type'] == 'str':
                 self.config_input_var[i] = tk.StringVar()
                 vcmd = (tab.register(self.validate_config),
                     '%P', '%s', key)
                 max_length = sc[key].get('max_length') or 12
                 max_length = np.minimum(max_length, 64)
-                self.config_input[i] = tk.Entry(
+                self.config_input[i] = ttk.Entry(
                     tab, textvariable=self.config_input_var[i],
                     validate='key', validatecommand=vcmd,
                     width=max_length, justify=tk.RIGHT)
                 self.config_input[i].insert(0, str(sc[key]['default']))
-                self.config_input[i].grid(row=i, column=2, columnspan=3, rowspan=1)
-                #tk.Label(tab, text='').grid(row=i, column=3, rowspan=1)
+                self.config_input[i].grid(row=i, column=2, columnspan=3, rowspan=1, padx=5)
+                #ttk.Label(tab, text='').grid(row=i, column=3, rowspan=1)
             elif sc[key]['type'] == 'bool':
                 if self.o.get_config(key) is True:
                     value = 1
@@ -608,10 +818,10 @@ class OpenDriftGUI(tk.Tk):
                 self.config_input_var[i] = tk.IntVar(value=value)
                 vcb = (tab.register(self.set_config_checkbox),
                        key, i)
-                self.config_input[i] = tk.Checkbutton(
+                self.config_input[i] = ttk.Checkbutton(
                     tab, variable=self.config_input_var[i],
                     command=vcb, text='')
-                self.config_input[i].grid(row=i, column=2, rowspan=1)
+                self.config_input[i].grid(row=i, column=2, rowspan=1, sticky='w', padx=5)
             elif sc[key]['type'] == 'enum':
                 self.config_input_var[i] = tk.StringVar(value=self.o.get_config(key))
                 width = len(max(sc[key]['enum'], key=len))
@@ -636,9 +846,26 @@ class OpenDriftGUI(tk.Tk):
         self.seed_input = {}
         self.seed_input_var = {}
         self.seed_input_label = {}
-        self.seed_frame = tk.Frame(self.seed, bd=2,
-                                   relief=tk.FLAT, padx=5, pady=0)
-        self.seed_frame.grid(row=60, columnspan=8, sticky='nsew')
+        
+        # Create a scrollable frame for seed parameters
+        self.seed_frame = ttk.LabelFrame(self.seed, text='SEED PARAMETERS', padding=(5, 5))
+        self.seed_frame.grid(row=55, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
+        
+        seed_canvas = tk.Canvas(self.seed_frame, highlightthickness=0, height=120, bg='white')
+        seed_scrollbar = ttk.Scrollbar(self.seed_frame, orient="vertical", command=seed_canvas.yview)
+        seed_inner = ttk.Frame(seed_canvas)
+        
+        seed_inner.bind(
+            "<Configure>",
+            lambda e: seed_canvas.configure(scrollregion=seed_canvas.bbox("all"))
+        )
+        
+        seed_canvas.create_window((0, 0), window=seed_inner, anchor="nw")
+        seed_canvas.configure(yscrollcommand=seed_scrollbar.set)
+        
+        seed_canvas.pack(side="left", fill="both", expand=True)
+        seed_scrollbar.pack(side="right", fill="y")
+        
         # FIND
         for num, i in enumerate(sc):
             varlabel = i.split(':')[-1]
@@ -649,32 +876,31 @@ class OpenDriftGUI(tk.Tk):
                         units = 'fraction'
                     varlabel = '%s [%s]' % (varlabel, units)
 
-            self.seed_input_label[i] = tk.Label(self.seed_frame,
-                                                text=varlabel + '\t')
-            self.seed_input_label[i].grid(row=num, column=0)
+            self.seed_input_label[i] = ttk.Label(seed_inner, text=varlabel + '\t')
+            self.seed_input_label[i].grid(row=num, column=0, sticky='w', padx=5, pady=2)
             CreateToolTip(self.seed_input_label[i], text=sc[i]['description'])
             actual_val = self.o.get_config(i)
             if sc[i]['type'] == 'enum':
                 self.seed_input_var[i] = tk.StringVar()
                 self.seed_input[i] = ttk.Combobox(
-                    self.seed_frame, width=50,
+                    seed_inner, width=50,
                     textvariable=self.seed_input_var[i],
                     values=sc[i]['enum'])
                 self.seed_input_var[i].set(actual_val)
             elif sc[i]['type'] == 'bool':
                 self.seed_input_var[i] = tk.IntVar(value=sc[i]['value'])
-                self.seed_input[i] = tk.Checkbutton(
-                    self.seed_frame, variable=self.seed_input_var[i],
+                self.seed_input[i] = ttk.Checkbutton(
+                    seed_inner, variable=self.seed_input_var[i],
                     text=sc[i]['description'])
             else:
                 self.seed_input_var[i] = tk.StringVar()
                 max_length = sc[i].get('max_length') or 12
                 max_length = np.minimum(max_length, 64)
-                self.seed_input[i] = tk.Entry(
-                    self.seed_frame, textvariable=self.seed_input_var[i],
+                self.seed_input[i] = ttk.Entry(
+                    seed_inner, textvariable=self.seed_input_var[i],
                     width=max_length, justify=tk.RIGHT)
                 self.seed_input[i].insert(0, actual_val)
-            self.seed_input[i].grid(row=num, column=1)
+            self.seed_input[i].grid(row=num, column=1, sticky='w', padx=5, pady=2)
 
     def set_config_checkbox(self, key, i):
         i = int(i)
@@ -696,6 +922,174 @@ class OpenDriftGUI(tk.Tk):
         print('Opening help website:\n' + help_url)
         import webbrowser
         webbrowser.open(help_url)
+    
+    def clear_output(self):
+        """Clear the output text box."""
+        self.text.configure(state='normal')
+        self.text.delete(1.0, tk.END)
+        self.text.configure(state='normal')
+        print('Output cleared.')
+    
+    def copy_output(self):
+        """Copy output text to clipboard."""
+        output_text = self.text.get(1.0, tk.END)
+        self.clipboard_clear()
+        self.clipboard_append(output_text)
+        print('Output copied to clipboard.')
+    
+    def save_log(self):
+        """Save output log to file."""
+        from tkinter import filedialog
+        from pathlib import Path
+        filename = filedialog.asksaveasfilename(
+            initialdir=Path.home(),
+            defaultextension='.txt',
+            filetypes=[('Text files', '*.txt'), ('Log files', '*.log'), ('All files', '*.*')]
+        )
+        if filename:
+            try:
+                with open(filename, 'w') as f:
+                    f.write(self.text.get(1.0, tk.END))
+                print(f'Log saved to: {filename}')
+            except Exception as e:
+                print(f'Error saving log: {e}')
+    
+    def reset_defaults(self):
+        """Reset all configuration to defaults."""
+        if hasattr(self, 'o'):
+            self.set_model(self.modelname, rebuild_gui=True)
+            print('Configuration reset to defaults.')
+    
+    def load_settings(self):
+        """Load settings from JSON file."""
+        from tkinter import filedialog
+        from pathlib import Path
+        import json
+        filename = filedialog.askopenfilename(
+            initialdir=Path.home(),
+            filetypes=[('JSON files', '*.json'), ('All files', '*.*')]
+        )
+        if filename:
+            try:
+                with open(filename, 'r') as f:
+                    settings = json.load(f)
+                # Switch model if different (rebuilds seed inputs)
+                if 'model' in settings and settings['model'] != self.model.get():
+                    self.model.set(settings['model'])
+                    self.set_model(settings['model'])
+                # Start position
+                if 'lon' in settings:
+                    self.lon.delete(0, tk.END)
+                    self.lon.insert(0, settings['lon'])
+                if 'lat' in settings:
+                    self.lat.delete(0, tk.END)
+                    self.lat.insert(0, settings['lat'])
+                if 'radius' in settings:
+                    self.radius.delete(0, tk.END)
+                    self.radius.insert(0, settings['radius'])
+                # End position
+                if 'elon' in settings:
+                    self.elon.delete(0, tk.END)
+                    self.elon.insert(0, settings['elon'])
+                if 'elat' in settings:
+                    self.elat.delete(0, tk.END)
+                    self.elat.insert(0, settings['elat'])
+                if 'eradius' in settings:
+                    self.eradius.delete(0, tk.END)
+                    self.eradius.insert(0, settings['eradius'])
+                # Start date/time
+                if 'start_date' in settings:
+                    self.datevar.set(settings['start_date'])
+                if 'start_month' in settings:
+                    self.monthvar.set(settings['start_month'])
+                if 'start_year' in settings:
+                    self.yearvar.set(settings['start_year'])
+                if 'start_hour' in settings:
+                    self.hourvar.set(settings['start_hour'])
+                if 'start_minute' in settings:
+                    self.minutevar.set(settings['start_minute'])
+                # End date/time
+                if 'end_date' in settings:
+                    self.edatevar.set(settings['end_date'])
+                if 'end_month' in settings:
+                    self.emonthvar.set(settings['end_month'])
+                if 'end_year' in settings:
+                    self.eyearvar.set(settings['end_year'])
+                if 'end_hour' in settings:
+                    self.ehourvar.set(settings['end_hour'])
+                if 'end_minute' in settings:
+                    self.eminutevar.set(settings['end_minute'])
+                # Timezone, duration, direction
+                if 'timezone' in settings:
+                    self.timezonevar.set(settings['timezone'])
+                if 'duration_hours' in settings:
+                    self.durationhours.delete(0, tk.END)
+                    self.durationhours.insert(0, settings['duration_hours'])
+                if 'direction' in settings:
+                    self.directionvar.set(settings['direction'])
+                # Restore seed parameters (z, m3_per_hour, oil_type, etc.)
+                if 'seed_params' in settings and hasattr(self, 'seed_input_var'):
+                    for key, val in settings['seed_params'].items():
+                        if key in self.seed_input_var:
+                            var = self.seed_input_var[key]
+                            if isinstance(var, tk.IntVar):
+                                var.set(int(val))
+                            else:
+                                var.set(str(val))
+                            # Also update the underlying config
+                            try:
+                                self.o.set_config(key, val)
+                            except Exception:
+                                pass
+                print(f'Settings loaded from: {filename}')
+            except Exception as e:
+                print(f'Error loading settings: {e}')
+    
+    def save_settings(self):
+        """Save current settings to JSON file."""
+        from tkinter import filedialog
+        from pathlib import Path
+        import json
+        filename = filedialog.asksaveasfilename(
+            initialdir=Path.home(),
+            defaultextension='.json',
+            filetypes=[('JSON files', '*.json'), ('All files', '*.*')]
+        )
+        if filename:
+            try:
+                settings = {
+                    'model': self.model.get(),
+                    'lon': self.lon.get(),
+                    'lat': self.lat.get(),
+                    'radius': self.radius.get(),
+                    'elon': self.elon.get(),
+                    'elat': self.elat.get(),
+                    'eradius': self.eradius.get(),
+                    'duration_hours': self.durationhours.get(),
+                    'direction': self.directionvar.get(),
+                    'start_date': self.datevar.get(),
+                    'start_month': self.monthvar.get(),
+                    'start_year': self.yearvar.get(),
+                    'start_hour': self.hourvar.get(),
+                    'start_minute': self.minutevar.get(),
+                    'end_date': self.edatevar.get(),
+                    'end_month': self.emonthvar.get(),
+                    'end_year': self.eyearvar.get(),
+                    'end_hour': self.ehourvar.get(),
+                    'end_minute': self.eminutevar.get(),
+                    'timezone': self.timezonevar.get(),
+                }
+                # Save all seed parameters (z, m3_per_hour, oil_type, etc.)
+                if hasattr(self, 'seed_input_var'):
+                    seed_params = {}
+                    for key, var in self.seed_input_var.items():
+                        seed_params[key] = var.get()
+                    settings['seed_params'] = seed_params
+                with open(filename, 'w') as f:
+                    json.dump(settings, f, indent=2)
+                print(f'Settings saved to: {filename}')
+            except Exception as e:
+                print(f'Error saving settings: {e}')
 
     def convert_lonlat(self):
         convert_url = 'https://www.rapidtables.com/convert/number/degrees-minutes-seconds-to-degrees.html'
@@ -748,6 +1142,10 @@ class OpenDriftGUI(tk.Tk):
         del so
 
     def run_opendrift(self):
+        # Set button to red while running
+        self.start_btn.config(bg='#d32f2f', fg='black',
+                              text='RUNNING...', state=tk.DISABLED)
+        self.update_idletasks()
         sys.stdout.write('running OpenDrift')
 
         try:
@@ -810,7 +1208,7 @@ class OpenDriftGUI(tk.Tk):
                 elif val == 0:
                     val = False
                 else:
-                    nothing
+                    pass
             self.o.set_config(se, val)
 
         self.o.add_readers_from_list(self.forcing_files)
@@ -834,8 +1232,56 @@ class OpenDriftGUI(tk.Tk):
             self.o.start_time.strftime('_%Y%m%d_%H%M')
 
         # Starting simulation run
-        self.o.run(steps=duration, **extra_args)
-        logging.getLogger('opendrift').info(self.o)
+        try:
+            self.o.run(steps=duration, **extra_args)
+            logging.getLogger('opendrift').info(self.o)
+
+            # Print clear summary of data sources actually used
+            print('\n' + '='*50)
+            print('DATA SOURCES USED IN THIS SIMULATION:')
+            print('='*50)
+            try:
+                variable_groups, reader_groups, missing = self.o.env.get_reader_groups()
+                used_readers = []
+                for rg in reader_groups:
+                    for r in rg:
+                        if r not in used_readers and r != 'global_landmask':
+                            used_readers.append(r)
+                if used_readers:
+                    for i, r in enumerate(used_readers, 1):
+                        print(f'  {i}) {r}')
+                else:
+                    print('  (no external readers used)')
+                print('-'*50)
+                print(f'Simulation period: {self.o.start_time} to {self.o.time} UTC')
+                print(f'Elements: {self.o.num_elements_active()} active, '
+                      f'{self.o.num_elements_deactivated()} deactivated')
+                print('='*50 + '\n')
+            except Exception:
+                pass
+
+        except ValueError as e:
+            error_msg = str(e)
+            logging.error(f'Simulation failed: {error_msg}')
+            messagebox.showerror('Simulation Error', 
+                                f'The simulation failed:\n\n{error_msg}\n\n'
+                                'Please check that you have selected appropriate data sources '
+                                'that cover your simulation area and time period.')
+            self.start_btn.config(bg='#4CAF50', fg='white', activebackground='#45a049',
+                                  text='START', state=tk.NORMAL)
+            return
+        except Exception as e:
+            error_msg = str(e)
+            logging.error(f'Unexpected error during simulation: {error_msg}')
+            messagebox.showerror('Simulation Error', 
+                                f'An unexpected error occurred:\n\n{error_msg}')
+            self.start_btn.config(bg='#4CAF50', fg='white', activebackground='#45a049',
+                                  text='START', state=tk.NORMAL)
+            return
+
+        # Simulation complete - button back to green
+        self.start_btn.config(bg='#4CAF50', fg='white', activebackground='#45a049',
+                              text='START', state=tk.NORMAL)
 
         try:
             os.chmod(extra_args['outfile'], 0o666)
@@ -845,66 +1291,68 @@ class OpenDriftGUI(tk.Tk):
         # Model-specific post processing
         self.o.gui_postproc()
 
+        # Notify user that simulation is finished
+        messagebox.showinfo('Simulation Complete',
+                            f'Simulation finished successfully!\n\n'
+                            f'{self.simulationname}')
 
-        self.results.destroy()
-        self.results = tk.Frame(self.seed, bd=2,
-                               relief=tk.FLAT, padx=5, pady=0)
-        self.results.grid(row=70, column=3, columnspan=1, sticky='ew')
-        tk.Button(self.results, text='Show animation',
-                  command=lambda: self.handle_result(
-                    'showanimation')).grid(row=10, column=1)
-        tk.Button(self.results, text='Save animation',
-                  command=lambda: self.handle_result(
-                    'saveanimation')).grid(row=20, column=1)
-        tk.Button(self.results, text='Show plot',
-                  command=lambda: self.handle_result(
-                    'showplot')).grid(row=30, column=1)
-        tk.Button(self.results, text='Save plot',
-                  command=lambda: self.handle_result(
-                    'saveplot')).grid(row=40, column=1)
+
+        try:
+            self.results.destroy()
+        except:
+            pass
+        self.results = ttk.Frame(self.seed, padding=(5, 5))
+        self.results.grid(row=70, column=0, columnspan=2, sticky='ew', padx=5)
+        
+        # Result buttons: fill horizontally first (4 per row), then wrap vertically
+        buttons = [
+            ('Show animation', lambda: self.handle_result('showanimation')),
+            ('Save animation', lambda: self.handle_result('saveanimation')),
+            ('Show plot', lambda: self.handle_result('showplot')),
+            ('Save plot', lambda: self.handle_result('saveplot')),
+        ]
         if self.model.get() == 'OpenOil':
-            tk.Button(self.results, text='Save oil budget',
-                      command=lambda: self.handle_result(
-                        'saveoilbudget')).grid(row=50, column=1)
-            tk.Button(self.results, text='Show oil budget',
-                      command=lambda: self.handle_result(
-                        'showoilbudget')).grid(row=60, column=1)
+            buttons.append(('Show oil budget', lambda: self.handle_result('showoilbudget')))
+            buttons.append(('Save oil budget', lambda: self.handle_result('saveoilbudget')))
+        if self.model.get() == 'RadionuclideDrift':
+            buttons.append(('Show animation specie', lambda: self.handle_result('showanimationspecie')))
+            buttons.append(('Save animation specie', lambda: self.handle_result('saveanimationspecie')))
+            buttons.append(('Animation profile', lambda: self.handle_result('showanimationprofile')))
+            buttons.append(('Plot conc', lambda: self.handle_result('plotconc')))
 
-
-        if self.model.get() =='RadionuclideDrift':
-            tk.Button(self.results, text='Show animation specie',
-                      command=lambda: self.handle_result(
-                          'showanimationspecie')).grid(row=30, column=2)
-            tk.Button(self.results, text='Save animation specie',
-                      command=lambda: self.handle_result(
-                          'saveanimationspecie')).grid(row=40, column=2)
-            tk.Button(self.results, text='Animation profile',
-                      command=lambda: self.handle_result(
-                          'showanimationprofile')).grid(row=10, column=2)
-#             tk.Button(self.results, text='Save conc file',
-#                       command=lambda: self.handle_result(
-#                           'saveconcfile')).grid(row=20, column=2)
-            tk.Button(self.results, text='Plot conc',
-                      command=lambda: self.handle_result(
-                          'plotconc')).grid(row=20, column=2)
+        max_cols = 4
+        for i, (text, cmd) in enumerate(buttons):
+            r, c = divmod(i, max_cols)
+            ttk.Button(self.results, text=text, command=cmd).grid(row=r, column=c, sticky='ew', padx=2, pady=2)
+        for c in range(max_cols):
+            self.results.columnconfigure(c, weight=1)
 
 
 
         if self.has_diana is True:
             diana_filename = self.dianadir + self.simulationname + '.nc'
             self.o.write_netcdf_density_map(diana_filename)
-            tk.Button(self.results, text='Show in Diana',
-                      command=lambda: os.system('diana &')
-                      ).grid(row=80, column=1)
+            
+            ttk.Button(self.results, text='Show in Diana',
+                       command=lambda: os.system('diana &')).grid(row=2, column=0, padx=2, pady=2)
+            ttk.Button(self.results, text='Copy netCDF file',
+                       command=lambda: self.handle_result('copy_netcdf')).grid(row=2, column=1, padx=2, pady=2)
 
             try:
                 os.chmod(diana_filename, 0o666)
             except:
                 pass
 
-            tk.Button(self.results, text='Copy netCDF file',
-                      command=lambda: self.handle_result(
-                          'copy_netcdf')).grid(row=81, column=1)
+        # Force canvas to update scroll region and scroll to bottom to show results
+        self.seed.update_idletasks()
+        self.seed_canvas.configure(scrollregion=self.seed_canvas.bbox("all"))
+        self.seed_canvas.yview_moveto(1.0)
+
+        # Bind mousewheel to result buttons so seed canvas scrolls when hovering over them
+        if hasattr(self, '_on_seed_mousewheel'):
+            self.results.bind("<MouseWheel>", self._on_seed_mousewheel)
+            for child in self.results.winfo_children():
+                child.bind("<MouseWheel>", self._on_seed_mousewheel)
 
         # Allow setting config for next run
         self.o.mode = Mode.Config

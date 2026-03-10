@@ -2619,10 +2619,10 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
         except:
             pass
 
-        try:  # Maximise figure window size
-            mng.resize(*mng.window.maxsize())
-        except:
-            pass
+        #try:  # Maximise figure window size
+        #    mng.resize(*mng.window.maxsize())
+        #except:
+        #    pass
 
         # TODO: avoid transposing lon, lat, and avoid returning lon, lat in the first place
         return fig, ax, self.crs_plot, lons.T, lats.T, index_of_first, index_of_last
@@ -3566,8 +3566,9 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
                         #cmap=plt.colormaps['Spectral'],
                         cmap=cmap,
                         norm=plt.Normalize(lvmin, lvmax),
+                        alpha=alpha,
+                        linewidth=linewidth,
                         transform=self.crs_lonlat)
-                    #lc.set_linewidth(3)
                     lc.set_array(param.T[vind, i])
                     mappable = ax.add_collection(lc)
                 #axcb = fig.colorbar(lc, ax = ax, orientation = 'horizontal')
@@ -3742,6 +3743,7 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
                               aspect=caspect,
                               shrink=cshrink,
                               drawedges=False)
+            cb.solids.set_alpha(1)  # Ensure colorbar is fully opaque
             # TODO: need better control of colorbar content
             if clabel is not None:
                 cb.set_label(clabel)
@@ -4664,37 +4666,66 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
 
         if filename is None or 'sphinx_gallery' in sys.modules:
             stack_offset = 4
-            import gc
-            fr = sys._getframe(2)
-            for o in gc.get_objects():
-                if inspect.isfunction(o) and o.__code__ is fr.f_code:
-                    if hasattr(getattr(self, o.__name__), '__wrapped__'):
-                        stack_offset = 5
+            try:
+                import gc
+                fr = sys._getframe(2)
+                for o in gc.get_objects():
+                    if inspect.isfunction(o) and o.__code__ is fr.f_code:
+                        if hasattr(getattr(self, o.__name__, None), '__wrapped__'):
+                            stack_offset = 5
+                            break
+            except Exception:
+                pass
             filename = self._sphinx_gallery_filename(stack_offset=stack_offset)
 
         logger.info('Saving animation to ' + str(filename) + '...')
 
         start_time = datetime.now()
 
+        # Try to find ffmpeg: first check imageio-ffmpeg (pip-installable),
+        # then fall back to system PATH
+        ffmpeg_available = False
+        try:
+            import imageio_ffmpeg
+            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+            plt.rcParams['animation.ffmpeg_path'] = ffmpeg_path
+            ffmpeg_available = True
+            logger.debug(f'Using ffmpeg from imageio-ffmpeg: {ffmpeg_path}')
+        except ImportError:
+            import shutil
+            if shutil.which('ffmpeg') is not None:
+                ffmpeg_available = True
+                logger.debug('Using system ffmpeg')
+            else:
+                logger.debug('ffmpeg not found')
+
         writer = None
 
         if str(filename)[-4:] == '.gif':
             writer = animation.PillowWriter(fps=fps)
-            # writer=animation.ImageMagickWriter(fps=fps)
         elif str(filename)[-4:] == '.mp4':
-            writer = animation.FFMpegWriter(
-                fps=fps,
-                codec='libx264',
-                bitrate=1800,
-                extra_args=[
-                    '-profile:v',
-                    'baseline',
-                    '-vf',
-                    'crop=trunc(iw/2)*2:trunc(ih/2)*2',  # cropping 1 pixel if not even
-                    '-pix_fmt',
-                    'yuv420p',
-                    '-an'
-                ])
+            if ffmpeg_available:
+                writer = animation.FFMpegWriter(
+                    fps=fps,
+                    codec='libx264',
+                    bitrate=1800,
+                    extra_args=[
+                        '-profile:v',
+                        'baseline',
+                        '-vf',
+                        'crop=trunc(iw/2)*2:trunc(ih/2)*2',  # cropping 1 pixel if not even
+                        '-pix_fmt',
+                        'yuv420p',
+                        '-an'
+                    ])
+            else:
+                # ffmpeg not available, fall back to .gif
+                filename = str(filename)[:-4] + '.gif'
+                writer = animation.PillowWriter(fps=fps)
+                logger.warning(
+                    'ffmpeg not found — saving as .gif instead of .mp4. '
+                    'Install ffmpeg with: pip install imageio-ffmpeg'
+                )
         else:
             # fallback to using funcwriter
             anim = animation.FuncAnimation(fig,
@@ -4705,10 +4736,13 @@ class OpenDriftSimulation(PhysicsMethods, Timeable, Configurable):
             anim.save(filename)
 
         if writer is not None:
-            with writer.saving(fig, filename, None):
-                for i in frames if isinstance(frames, (list, range)) else range(frames):
+            with writer.saving(fig, filename, fig.get_dpi()):
+                num_frames = len(frames) if isinstance(frames, (list, range)) else frames
+                for idx, i in enumerate(frames if isinstance(frames, (list, range)) else range(frames)):
                     plot_timestep(i)
                     writer.grab_frame()
+                    if (idx + 1) % 10 == 0 or (idx + 1) == num_frames:
+                        logger.info(f'Saved frame {idx + 1}/{num_frames}')
 
         logger.debug(f"MPLBACKEND = {matplotlib.get_backend()}")
         logger.debug(f"DISPLAY = {os.environ.get('DISPLAY', 'None')}")

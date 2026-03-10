@@ -61,7 +61,18 @@ def open_dataset_opendrift(source, zarr_storage_options=None, open_mfdataset_opt
                                decode_times=False, **open_mfdataset_options)
     else:
         logger.info('Opening file with xr.open_dataset')
-        ds = xr.open_dataset(source, decode_times=False)
+        source_str = str(source)
+        try:
+            ds = xr.open_dataset(source, decode_times=False)
+        except ValueError:
+            # Newer xarray versions cannot auto-detect the engine for
+            # OPeNDAP URLs without .nc extension. Fall back to netcdf4,
+            # which is the only engine supporting the OPeNDAP/DAP protocol.
+            if source_str.startswith('http://') or source_str.startswith('https://'):
+                logger.info('Retrying with engine=netcdf4 for OPeNDAP URL')
+                ds = xr.open_dataset(source, decode_times=False, engine='netcdf4')
+            else:
+                raise
 
     # Decode CF times
     offending = ds.filter_by_attrs(units='hours since analysis')  # Found e.g. in HYCOM datasets

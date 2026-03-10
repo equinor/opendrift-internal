@@ -192,9 +192,17 @@ def plot_land(ax, lonmin, latmin, lonmax, latmax, fast,
 
         land = LandmaskFeature(scale=lscale, facecolor=land_color, globe=crs_lonlat.globe, levels=[1,5,6])
 
-        ax.add_feature(land, zorder=land_zorder,
-                       facecolor=land_color,
-                       edgecolor='black')
+        # Resolve geometries once into a list, then add as static shapes.
+        # Using ax.add_feature(land) would cause Cartopy to re-query
+        # intersecting_geometries() on every draw event (zoom, pan, hover),
+        # re-clipping thousands of coastline polygons each time.
+        extent = (lonmin, lonmax, latmin, latmax)
+        geoms = list(land.intersecting_geometries(extent))
+        logger.debug(f'Adding {len(geoms)} pre-resolved coastline geometries')
+        ax.add_geometries(geoms, crs_lonlat,
+                          facecolor=land_color,
+                          edgecolor='black',
+                          zorder=land_zorder)
 
 
 
